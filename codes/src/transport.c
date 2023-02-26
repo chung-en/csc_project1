@@ -10,19 +10,43 @@
 #include "net.h"
 #include "transport.h"
 
+uint16_t cal_cksm(unsigned char *buf, int len) {
+    uint32_t sum = 0;
+    uint16_t *ptr = (uint16_t *) buf;
+
+    while (len > 1) {
+        sum += *ptr++;
+        len -= 2;
+    }
+
+    if (len == 1) {
+        sum += *(unsigned char *)ptr;
+    }
+
+    sum = (sum >> 16) + (sum & 0xffff);
+    sum += (sum >> 16);
+
+    return (uint16_t) (~sum);
+}
+
 uint16_t cal_tcp_cksm(struct iphdr iphdr, struct tcphdr tcphdr, uint8_t *pl, int plen)
 {
     // [TODO]: Finish TCP checksum calculation
-    pl = (uint8_t *) tcphdr;
-    plen = ntohs(iphdr.tot_len - iphdr.ihl*4);
+    uint16_t tcp_len = ntohs(iphdr.tot_len) - iphdr.ihl*4;
+    unsigned char *buf = (unsigned char *) malloc(sizeof(struct pseudo_header) + tcp_len);
+    memset(buf, 0, sizeof(struct pseudo_header) + tcp_len);
 
-    unsigned sum = csum_partial(pl, plen, 0);
-    sum += (iphdr.saddr & 0xffff) + ((iphdr.saddr >> 16) & 0xffff);
-    sum += (iphdr.daddr & 0xffff) + ((iphdr.daddr >> 16) & 0xffff);
-    sum += htons(IPPROTO_TCP);
-    sum += htons(plen);
+    struct pseudo_header *ph = (struct pseudo_header *) buf;
+    ph->src_addr = iphdr.saddr;
+    ph->dst_addr = iphdr.daddr;
+    ph->reserved = 0;
+    ph->protocol = IPPROTO_TCP;
+    ph->tcp_length = htons(tcp_len);
+    memcpy(buf + sizeof(struct pseudo_header), tcphdr, tcp_len);
 
-    return csum_fold(sum);
+    uint16_t tcp_cksm= cal_cksm(buf, sizeof(struct pseudo_header) + tcp_len);
+    free(buf);
+    return tcp_cksm;
 }
 
 uint8_t *dissect_tcp(Net *net, Txp *self, uint8_t *segm, size_t segm_len)
